@@ -58,46 +58,22 @@ CodeCopilot is an autonomous AI coding agent that lives in your terminal. It pla
 
 ## 🔁 The Agentic Loop
 
-This is what happens between you typing a prompt and the final answer:
-
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor U as 👤 User
-    participant C as 💻 CLI
-    participant A as 🎯 Agent
-    participant L as ☁️ LLM
-    participant T as 🔧 Tools
-    participant M as 🧠 Memory<br/>(ContextManager)
+flowchart TD
+    Start([👤 user prompt]) --> Mem[📝 add to memory]
+    Mem --> Call[☁️ call LLM<br/>with all tools]
+    Call --> Check{tool_calls?}
+    Check -->|yes| Run[⚡ run tools in parallel]
+    Run --> Mem
+    Check -->|no| Done([✦ final answer])
 
-    U->>C: prompt
-    C->>A: Agent.chat(prompt)
-    A->>M: add user message
-
-    loop up to MAX_AGENTIC_TURNS (20)
-        A->>L: chat.completions.create<br/>(messages, tools=[14])
-        L-->>A: response
-
-        alt response has tool_calls
-            A->>M: add assistant tool_calls msg
-            par parallel execution
-                A->>T: tool 1 (call_id_1)
-                A->>T: tool 2 (call_id_2)
-                A->>T: tool 3 (call_id_3)
-            end
-            T-->>A: results
-            A-->>C: yield tool_call + tool_result events
-            C-->>U: live render (icons, badges, diffs)
-            A->>M: add tool result messages
-        else response is final answer
-            A->>M: add assistant message
-            A-->>C: yield AgentEvent(type='answer')
-            C-->>U: render Markdown panel
-        end
-    end
+    style Start fill:#1e293b,stroke:#22d3ee,color:#fff
+    style Call fill:#0f766e,stroke:#14b8a6,color:#fff
+    style Run fill:#7c3aed,stroke:#a78bfa,color:#fff
+    style Done fill:#16a34a,stroke:#4ade80,color:#fff
 ```
 
-The loop ends when the LLM returns a message with no `tool_calls` — that's the final answer. If the loop ever hits 20 turns, it bails out with a `max turns reached` error. Workers spawned by `spawn_agent` run their own copy of this exact loop with a 15-turn cap.
+The loop ends when the LLM returns a message with no tool calls — that's the final answer. Hard cap of **20 turns** on the orchestrator, **15 turns** on workers, so it can never run forever.
 
 ---
 
@@ -183,51 +159,33 @@ Tools that modify files (`write_file`, `edit_file`) always pause for `[Y/n]` con
 
 ```mermaid
 flowchart TD
-    User([👤 User]) -->|prompt| CLI[💻 cli.py<br/>Interactive REPL]
-    CLI -->|first message| Router{🧭 Persona Router<br/>LLM classifier}
-    Router -->|coder| Orch
-    Router -->|debugger| Orch
-    Router -->|default| Orch
+    User([👤 User]) --> CLI[💻 CLI]
+    CLI --> Router{🧭 Router}
+    Router --> Orch[🎯 Orchestrator<br/>14 tools]
+    Orch <--> LLM[(☁️ LLM)]
+    Orch --> Tools[🔧 Tool Layer]
 
-    Orch[🎯 Orchestrator Agent<br/>main.py<br/>14 tools, 20-turn budget]
+    Tools --> FS[📂 File · Shell]
+    Tools --> Web[🌐 Web · RAG]
+    Tools --> Spawn[🤖 spawn_agent]
 
-    Orch -->|chat completion + tools=| LLM[(☁️ Inference Backend<br/>Cerebras / Groq / HF / Ollama)]
-    LLM -->|tool_calls[]| Orch
+    Spawn --> WA[👷 Worker A<br/>coder]
+    Spawn --> WB[👷 Worker B<br/>debugger]
+    Spawn --> WC[👷 Worker C<br/>default]
 
-    Orch -->|parallel ThreadPool| TBox[🔧 Tool Execution Layer]
+    WA --> LLM
+    WB --> LLM
+    WC --> LLM
 
-    TBox --> FS[📂 File Tools<br/>read · write · edit<br/>list · glob · grep]
-    TBox --> Shell[⚡ Shell Tools<br/>bash_tool · code_exec]
-    TBox --> Web[🌐 Web Tools<br/>web_search · fetch_url]
-    TBox --> Plan[🗺️ plan · 📓 notebook<br/>structured tracking]
-    TBox --> Q[❓ question_tool<br/>asks user mid-loop]
-    TBox --> RAG[🔬 codebase_search]
-    TBox --> Spawn[🤖 spawn_agent]
+    FS --> Sandbox[🛡️ Sandbox]
 
-    RAG --> Vec[(💾 ChromaDB<br/>.chroma/)]
-    Vec --> Embed[🧠 sentence-transformers<br/>all-MiniLM-L6-v2 · 384-d]
-
-    Spawn -->|isolated context| WA[👷 Worker A<br/>coder · 13 tools<br/>15-turn cap]
-    Spawn -->|isolated context| WB[👷 Worker B<br/>debugger · 13 tools]
-    Spawn -->|isolated context| WC[👷 Worker C<br/>default · 13 tools]
-
-    WA -->|own loop| LLM
-    WB -->|own loop| LLM
-    WC -->|own loop| LLM
-
-    FS --> Sandbox[🛡️ secure_fs<br/>path sandbox + blocklist]
-    Shell --> Sandbox
-
-    style User fill:#1e293b,stroke:#22d3ee,color:#fff
     style Orch fill:#7c3aed,stroke:#a78bfa,color:#fff
     style LLM fill:#0f766e,stroke:#14b8a6,color:#fff
-    style RAG fill:#9333ea,stroke:#c084fc,color:#fff
     style Spawn fill:#dc2626,stroke:#f87171,color:#fff
     style WA fill:#a78bfa,stroke:#c4b5fd,color:#000
     style WB fill:#f97316,stroke:#fb923c,color:#000
     style WC fill:#22d3ee,stroke:#67e8f9,color:#000
     style Sandbox fill:#dc2626,stroke:#fca5a5,color:#fff
-    style Vec fill:#0891b2,stroke:#22d3ee,color:#fff
 ```
 
 **Key invariants:**
@@ -237,46 +195,32 @@ flowchart TD
 - Workers get a **fresh memory** plus an explicit `context` argument from the orchestrator — they don't share state with the parent or with each other.
 - **Hard caps:** orchestrator 20 turns, workers 15 turns. Prevents runaway loops.
 
-### 🤖 Inside `spawn_agent` — how delegation actually works
+### 🤖 Inside `spawn_agent`
 
 ```mermaid
-flowchart TB
-    subgraph Parent["🎯 Orchestrator (parent)"]
-        OL[parent agentic loop] --> ToolCall["spawn_agent(<br/>task='audit auth code',<br/>persona='debugger',<br/>context='paths + snippets'<br/>)"]
-    end
+flowchart LR
+    Parent[🎯 Orchestrator] -->|task + context| Spawn{🤖 spawn_agent}
+    Spawn --> Worker[👷 Worker<br/>fresh memory<br/>13 tools]
+    Worker --> WLoop((🔁 own loop<br/>15 turns))
+    WLoop --> Worker
+    Worker -->|JSON result| Parent
 
-    ToolCall -->|spawns isolated| Worker
-
-    subgraph Worker["👷 WorkerAgent (child)"]
-        direction TB
-        Init[fresh memory<br/>persona prompt<br/>+ context msg<br/>+ task as user msg] --> WLoop[child agentic loop<br/>15-turn cap]
-        WLoop --> WTools[13 tools<br/>spawn_agent BLOCKED]
-        WTools --> WLoop
-        WLoop --> WAns[final answer]
-    end
-
-    WAns -->|JSON: status, answer,<br/>tool_calls_made| Result[📦 result blob]
-    Result -->|injected as<br/>tool result| OL
-
-    NoRecur[🚫 No spawn_agent<br/>in worker tools]
-    Worker -.- NoRecur
+    Block[🚫 spawn_agent<br/>blocked]
+    Worker -.- Block
 
     style Parent fill:#7c3aed,stroke:#a78bfa,color:#fff
+    style Spawn fill:#dc2626,stroke:#f87171,color:#fff
     style Worker fill:#1e293b,stroke:#fb923c,color:#fff
-    style ToolCall fill:#dc2626,stroke:#f87171,color:#fff
-    style Init fill:#0f766e,stroke:#14b8a6,color:#fff
-    style WLoop fill:#7c3aed,stroke:#a78bfa,color:#fff
-    style WAns fill:#16a34a,stroke:#4ade80,color:#fff
-    style Result fill:#0891b2,stroke:#22d3ee,color:#fff
-    style NoRecur fill:#7f1d1d,stroke:#fca5a5,color:#fff
+    style WLoop fill:#0f766e,stroke:#14b8a6,color:#fff
+    style Block fill:#7f1d1d,stroke:#fca5a5,color:#fff
 ```
 
 **Why this matters:**
 
-- Workers don't see the parent's conversation — only the explicit `context` string. This **prevents context pollution** between sub-tasks.
+- Workers don't see the parent's conversation — only the explicit `context` string. **Prevents context pollution** between sub-tasks.
 - Workers can use any tool except `spawn_agent`, so they can read files, search the web, run code, but **cannot recursively spawn**. No infinite agent trees.
-- When the orchestrator returns multiple `spawn_agent` calls in one turn, the worker loops run **in parallel** (up to `MAX_PARALLEL_TOOLS = 4`). Three workers auditing three different files simultaneously is the canonical use case.
-- The result is wrapped in JSON (`{status, answer, tool_calls_made, error}`) and injected back into the parent loop as a normal tool result. From the parent LLM's perspective, it just called a tool that thought hard and returned a string.
+- Multiple workers run **in parallel** (up to `MAX_PARALLEL_TOOLS = 4`).
+- Result is wrapped in JSON (`{status, answer, tool_calls_made}`) and injected back as a normal tool result.
 
 ---
 
@@ -284,37 +228,24 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    subgraph Indexing["🏗️ Indexing  (one-time per project)"]
-        direction TB
-        Files[📁 Project files<br/>.py .md .js .ts ...] --> Chunker[✂️ chunker.py]
-        Chunker -->|Python| AST[🐍 AST split<br/>by class / def]
-        Chunker -->|other| Window[📐 60-line window<br/>15-line overlap]
-        AST --> Pieces[📦 Chunks<br/>+ file_path<br/>+ line range<br/>+ symbol]
-        Window --> Pieces
-        Pieces --> Embed1[🧠 MiniLM-L6-v2<br/>384-dim vectors]
-        Embed1 --> Store[(💾 ChromaDB<br/>cosine HNSW)]
+    subgraph Index["🏗️ Indexing"]
+        Files[📁 Files] --> Chunk[✂️ Chunk]
+        Chunk --> Emb1[🧠 Embed]
+        Emb1 --> DB[(💾 ChromaDB)]
     end
 
-    subgraph Retrieval["🔍 Retrieval  (every codebase_search call)"]
-        direction TB
-        Query[💬 Natural language<br/>'how is attention computed?'] --> Embed2[🧠 MiniLM-L6-v2]
-        Embed2 --> Vec[📍 Query vector]
-        Vec --> Search{🎯 Nearest-neighbor<br/>cosine similarity}
-        Store -.cached.-> Search
-        Search --> TopN[🏆 Top-N hits<br/>+ score<br/>+ snippet<br/>+ line numbers]
-        TopN --> Agent[🤖 Agent reads<br/>relevant files]
+    subgraph Search["🔍 Search"]
+        Q[💬 Query] --> Emb2[🧠 Embed]
+        Emb2 --> Find{🎯 Cosine NN}
+        DB -.-> Find
+        Find --> Top[🏆 Top-N hits]
     end
 
     style Files fill:#1e293b,stroke:#475569,color:#fff
-    style Chunker fill:#7c3aed,stroke:#a78bfa,color:#fff
-    style AST fill:#9333ea,stroke:#c084fc,color:#fff
-    style Window fill:#9333ea,stroke:#c084fc,color:#fff
-    style Embed1 fill:#0891b2,stroke:#22d3ee,color:#fff
-    style Embed2 fill:#0891b2,stroke:#22d3ee,color:#fff
-    style Store fill:#0f766e,stroke:#14b8a6,color:#fff
-    style Search fill:#dc2626,stroke:#f87171,color:#fff
-    style TopN fill:#16a34a,stroke:#4ade80,color:#fff
-    style Agent fill:#1e293b,stroke:#22d3ee,color:#fff
+    style Chunk fill:#7c3aed,stroke:#a78bfa,color:#fff
+    style DB fill:#0f766e,stroke:#14b8a6,color:#fff
+    style Find fill:#dc2626,stroke:#f87171,color:#fff
+    style Top fill:#16a34a,stroke:#4ade80,color:#fff
 ```
 
 **Why this design:**
