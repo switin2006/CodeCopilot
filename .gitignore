@@ -1,16 +1,41 @@
-# Node rules:
-## Grunt intermediate storage (http://gruntjs.com/creating-plugins#storing-task-files)
+# ── Python ────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Environment ───────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+venv/
+env/
+.venv/
+
+# ── Agent Runtime Data (do NOT commit — user-specific state) ──────
+memory_store.json
+todo_list.json
+agent_notebook.json
+active_plan.json
+.chroma/
+
+# ── Node ──────────────────────────────────────────────────────────
 .grunt
-
-## Dependency directory
-## Commenting this out is preferred by some people, see
-## https://docs.npmjs.com/misc/faq#should-i-check-my-node_modules-folder-into-git
-node_modules
-
-# Book build output
+node_modules/
 _book
 
-# eBook build output
+# ── eBook build output ────────────────────────────────────────────
 *.epub
 *.mobi
 *.pdf
+
+# ── IDE ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -1,0 +1,12 @@
+# Core
+openai>=1.40.0          # OpenAI-compatible client used to talk to local Ollama
+python-dotenv
+rich
+prompt_toolkit
+
+# RAG dependencies (semantic code search, runs locally on CPU)
+chromadb
+sentence-transformers
+
+# Already pulled by sentence-transformers, listed explicitly for clarity:
+# torch  (CPU build is fine — no GPU needed for all-MiniLM-L6-v2)

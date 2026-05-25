@@ -7,7 +7,8 @@ from typing import List, Dict, Callable, Any
 
 logger = logging.getLogger(__name__)
 
-TOOLS_DIR = "tools"
+_root_dir = os.path.dirname(os.path.abspath(__file__))
+TOOLS_DIR = os.path.join(_root_dir, "tools")
 
 _TOOL_CACHE = {
     "schemas": [],      # List of JSON schemas
@@ -34,15 +35,15 @@ def _scan_and_load_tools(force_reload: bool = False):
     temp_schemas = []
     
     # Check root path is in sys.path to allow 'tools.module' imports
-    if os.getcwd() not in sys.path:
-        sys.path.append(os.getcwd())
+    if _root_dir not in sys.path:
+        sys.path.insert(0, _root_dir)
 
     # 3. Walk the tools directory only once
     for root, _, files in os.walk(TOOLS_DIR):
         for file in files:
             if file.endswith(".py") and not file.startswith("__"):
                 # Calculate module path (e.g., "tools.file_ops")
-                rel_path = os.path.relpath(os.path.join(root, file), os.getcwd())
+                rel_path = os.path.relpath(os.path.join(root, file), _root_dir)
                 module_path = rel_path.replace(os.sep, ".").replace(".py", "")
 
                 try:
