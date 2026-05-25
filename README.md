@@ -307,5 +307,5 @@ MIT — see [LICENSE](LICENSE).
 ---
 
 <div align="center">
-<sub>Built with ❤️ in the terminal. Powered by your favorite OpenAI-compatible LLM.</sub>
+<sub>Built with ❤️ in the terminal.</sub>
 </div>
