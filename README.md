@@ -136,46 +136,110 @@ Tools that modify files (`write_file`, `edit_file`) always pause for `[Y/n]` con
 
 ## 🤖 Multi-Agent Architecture
 
-```
-                        ┌──────────────────────────────┐
-                        │      Orchestrator Agent      │
-                        │  (full toolset + spawn_agent)│
-                        └──────┬───────────────────────┘
-                               │
-                ┌──────────────┼──────────────┐
-                │              │              │
-        ┌───────▼──────┐ ┌─────▼───────┐ ┌───▼─────────┐
-        │  Worker A    │ │  Worker B   │ │  Worker C   │
-        │  persona=    │ │  persona=   │ │  persona=   │
-        │  coder       │ │  debugger   │ │  default    │
-        │              │ │             │ │             │
-        │  13 tools    │ │  13 tools   │ │  13 tools   │
-        │  (no spawn)  │ │  (no spawn) │ │  (no spawn) │
-        └──────────────┘ └─────────────┘ └─────────────┘
+```mermaid
+flowchart TD
+    User([👤 User]) -->|prompt| CLI[💻 cli.py<br/>Interactive REPL]
+    CLI -->|first message| Router{🧭 Persona Router<br/>LLM classifier}
+    Router -->|coder| Orch
+    Router -->|debugger| Orch
+    Router -->|default| Orch
+
+    Orch[🎯 Orchestrator Agent<br/>main.py<br/>14 tools, 20-turn budget]
+
+    Orch -->|chat completion + tools=| LLM[(☁️ Inference Backend<br/>Cerebras / Groq / HF / Ollama)]
+    LLM -->|tool_calls[]| Orch
+
+    Orch -->|parallel ThreadPool| TBox[🔧 Tool Execution Layer]
+
+    TBox --> FS[📂 File Tools<br/>read · write · edit<br/>list · glob · grep]
+    TBox --> Shell[⚡ Shell Tools<br/>bash_tool · code_exec]
+    TBox --> Web[🌐 Web Tools<br/>web_search · fetch_url]
+    TBox --> Plan[🗺️ plan · 📓 notebook<br/>structured tracking]
+    TBox --> Q[❓ question_tool<br/>asks user mid-loop]
+    TBox --> RAG[🔬 codebase_search]
+    TBox --> Spawn[🤖 spawn_agent]
+
+    RAG --> Vec[(💾 ChromaDB<br/>.chroma/)]
+    Vec --> Embed[🧠 sentence-transformers<br/>all-MiniLM-L6-v2 · 384-d]
+
+    Spawn -->|isolated context| WA[👷 Worker A<br/>coder · 13 tools<br/>15-turn cap]
+    Spawn -->|isolated context| WB[👷 Worker B<br/>debugger · 13 tools]
+    Spawn -->|isolated context| WC[👷 Worker C<br/>default · 13 tools]
+
+    WA -->|own loop| LLM
+    WB -->|own loop| LLM
+    WC -->|own loop| LLM
+
+    FS --> Sandbox[🛡️ secure_fs<br/>path sandbox + blocklist]
+    Shell --> Sandbox
+
+    style User fill:#1e293b,stroke:#22d3ee,color:#fff
+    style Orch fill:#7c3aed,stroke:#a78bfa,color:#fff
+    style LLM fill:#0f766e,stroke:#14b8a6,color:#fff
+    style RAG fill:#9333ea,stroke:#c084fc,color:#fff
+    style Spawn fill:#dc2626,stroke:#f87171,color:#fff
+    style WA fill:#a78bfa,stroke:#c4b5fd,color:#000
+    style WB fill:#f97316,stroke:#fb923c,color:#000
+    style WC fill:#22d3ee,stroke:#67e8f9,color:#000
+    style Sandbox fill:#dc2626,stroke:#fca5a5,color:#fff
+    style Vec fill:#0891b2,stroke:#22d3ee,color:#fff
 ```
 
-- **Orchestrator** has all 14 tools and runs up to 20 LLM↔tool turns.
-- **Workers** are isolated, get all tools *except* `spawn_agent` (no recursion), and have a 15-turn cap.
-- Workers receive a fresh memory plus an explicit `context` argument from the orchestrator — they don't share state.
-- When the orchestrator returns multiple tool calls in one turn, they execute in **parallel** via a thread pool.
+**Key invariants:**
+
+- The **orchestrator** has all 14 tools. Workers get 13 (no `spawn_agent` → no recursion).
+- **Tool calls execute in parallel** when the LLM returns multiple in one turn (`ThreadPoolExecutor`, max 4 concurrent).
+- Workers get a **fresh memory** plus an explicit `context` argument from the orchestrator — they don't share state with the parent or with each other.
+- **Hard caps:** orchestrator 20 turns, workers 15 turns. Prevents runaway loops.
 
 ---
 
 ## 🔬 How RAG Works Here
 
+```mermaid
+flowchart LR
+    subgraph Indexing["🏗️ Indexing  (one-time per project)"]
+        direction TB
+        Files[📁 Project files<br/>.py .md .js .ts ...] --> Chunker[✂️ chunker.py]
+        Chunker -->|Python| AST[🐍 AST split<br/>by class / def]
+        Chunker -->|other| Window[📐 60-line window<br/>15-line overlap]
+        AST --> Pieces[📦 Chunks<br/>+ file_path<br/>+ line range<br/>+ symbol]
+        Window --> Pieces
+        Pieces --> Embed1[🧠 MiniLM-L6-v2<br/>384-dim vectors]
+        Embed1 --> Store[(💾 ChromaDB<br/>cosine HNSW)]
+    end
+
+    subgraph Retrieval["🔍 Retrieval  (every codebase_search call)"]
+        direction TB
+        Query[💬 Natural language<br/>'how is attention computed?'] --> Embed2[🧠 MiniLM-L6-v2]
+        Embed2 --> Vec[📍 Query vector]
+        Vec --> Search{🎯 Nearest-neighbor<br/>cosine similarity}
+        Store -.cached.-> Search
+        Search --> TopN[🏆 Top-N hits<br/>+ score<br/>+ snippet<br/>+ line numbers]
+        TopN --> Agent[🤖 Agent reads<br/>relevant files]
+    end
+
+    style Files fill:#1e293b,stroke:#475569,color:#fff
+    style Chunker fill:#7c3aed,stroke:#a78bfa,color:#fff
+    style AST fill:#9333ea,stroke:#c084fc,color:#fff
+    style Window fill:#9333ea,stroke:#c084fc,color:#fff
+    style Embed1 fill:#0891b2,stroke:#22d3ee,color:#fff
+    style Embed2 fill:#0891b2,stroke:#22d3ee,color:#fff
+    style Store fill:#0f766e,stroke:#14b8a6,color:#fff
+    style Search fill:#dc2626,stroke:#f87171,color:#fff
+    style TopN fill:#16a34a,stroke:#4ade80,color:#fff
+    style Agent fill:#1e293b,stroke:#22d3ee,color:#fff
 ```
-   rag/chunker.py    →    rag/embedder.py    →    rag/indexer.py    →   ChromaDB
-  (split into pieces)    (turn into vectors)      (store + query)        (.chroma/)
-```
 
-1. **Chunking.** Python files are AST-split by top-level functions/classes. Other files use a 60-line sliding window with 15-line overlap. Hidden dirs, virtualenvs, build artifacts, and binary files are skipped.
-2. **Embedding.** `sentence-transformers/all-MiniLM-L6-v2` produces 384-dim vectors locally on CPU (~22 MB model, no GPU needed).
-3. **Storage.** ChromaDB persists vectors in `.chroma/` under each project root. Cosine similarity (HNSW index) for fast nearest-neighbor search.
-4. **Retrieval.** `codebase_search(query)` embeds the query, returns top-N chunks ranked by semantic similarity with file paths, line numbers, and snippets.
+**Why this design:**
 
-Each project gets its own `.chroma/` index. The first run auto-builds it; `/reindex` rebuilds incrementally; `/reindex --force` wipes and rebuilds from scratch.
+1. **AST chunking for Python** — each chunk is a coherent function or class, not an arbitrary 500-character slice. Far better signal-to-noise than naive splitting.
+2. **MiniLM-L6-v2** — 22 MB, 384-d, runs on CPU at ~14k sentences/sec. No GPU, no API keys, no per-query cost.
+3. **Cosine + HNSW** — correct distance metric for sentence embeddings, and HNSW gives sub-millisecond approximate-nearest-neighbor lookup even at tens of thousands of chunks.
+4. **Per-project store** — each `--workdir` gets its own `.chroma/`. No cross-contamination.
+5. **Deterministic chunk IDs** — `md5(file_path + lines)` means re-indexing is incremental, not "wipe and rebuild".
 
-**RAG shines for conceptual questions** (*"where is the noise schedule for diffusion sampling?"*). For exact-string searches, the agent uses `grep_tool` instead. The model decides which to use.
+**RAG shines for conceptual queries** (*"where is the noise schedule for diffusion sampling?"*). For exact-string searches, the agent uses `grep_tool` instead. The model decides which to use.
 
 ---
 
