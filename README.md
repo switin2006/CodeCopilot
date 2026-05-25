@@ -56,6 +56,51 @@ CodeCopilot is an autonomous AI coding agent that lives in your terminal. It pla
 
 ---
 
+## 🔁 The Agentic Loop
+
+This is what happens between you typing a prompt and the final answer:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as 👤 User
+    participant C as 💻 CLI
+    participant A as 🎯 Agent
+    participant L as ☁️ LLM
+    participant T as 🔧 Tools
+    participant M as 🧠 Memory<br/>(ContextManager)
+
+    U->>C: prompt
+    C->>A: Agent.chat(prompt)
+    A->>M: add user message
+
+    loop up to MAX_AGENTIC_TURNS (20)
+        A->>L: chat.completions.create<br/>(messages, tools=[14])
+        L-->>A: response
+
+        alt response has tool_calls
+            A->>M: add assistant tool_calls msg
+            par parallel execution
+                A->>T: tool 1 (call_id_1)
+                A->>T: tool 2 (call_id_2)
+                A->>T: tool 3 (call_id_3)
+            end
+            T-->>A: results
+            A-->>C: yield tool_call + tool_result events
+            C-->>U: live render (icons, badges, diffs)
+            A->>M: add tool result messages
+        else response is final answer
+            A->>M: add assistant message
+            A-->>C: yield AgentEvent(type='answer')
+            C-->>U: render Markdown panel
+        end
+    end
+```
+
+The loop ends when the LLM returns a message with no `tool_calls` — that's the final answer. If the loop ever hits 20 turns, it bails out with a `max turns reached` error. Workers spawned by `spawn_agent` run their own copy of this exact loop with a 15-turn cap.
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -191,6 +236,47 @@ flowchart TD
 - **Tool calls execute in parallel** when the LLM returns multiple in one turn (`ThreadPoolExecutor`, max 4 concurrent).
 - Workers get a **fresh memory** plus an explicit `context` argument from the orchestrator — they don't share state with the parent or with each other.
 - **Hard caps:** orchestrator 20 turns, workers 15 turns. Prevents runaway loops.
+
+### 🤖 Inside `spawn_agent` — how delegation actually works
+
+```mermaid
+flowchart TB
+    subgraph Parent["🎯 Orchestrator (parent)"]
+        OL[parent agentic loop] --> ToolCall["spawn_agent(<br/>task='audit auth code',<br/>persona='debugger',<br/>context='paths + snippets'<br/>)"]
+    end
+
+    ToolCall -->|spawns isolated| Worker
+
+    subgraph Worker["👷 WorkerAgent (child)"]
+        direction TB
+        Init[fresh memory<br/>persona prompt<br/>+ context msg<br/>+ task as user msg] --> WLoop[child agentic loop<br/>15-turn cap]
+        WLoop --> WTools[13 tools<br/>spawn_agent BLOCKED]
+        WTools --> WLoop
+        WLoop --> WAns[final answer]
+    end
+
+    WAns -->|JSON: status, answer,<br/>tool_calls_made| Result[📦 result blob]
+    Result -->|injected as<br/>tool result| OL
+
+    NoRecur[🚫 No spawn_agent<br/>in worker tools]
+    Worker -.- NoRecur
+
+    style Parent fill:#7c3aed,stroke:#a78bfa,color:#fff
+    style Worker fill:#1e293b,stroke:#fb923c,color:#fff
+    style ToolCall fill:#dc2626,stroke:#f87171,color:#fff
+    style Init fill:#0f766e,stroke:#14b8a6,color:#fff
+    style WLoop fill:#7c3aed,stroke:#a78bfa,color:#fff
+    style WAns fill:#16a34a,stroke:#4ade80,color:#fff
+    style Result fill:#0891b2,stroke:#22d3ee,color:#fff
+    style NoRecur fill:#7f1d1d,stroke:#fca5a5,color:#fff
+```
+
+**Why this matters:**
+
+- Workers don't see the parent's conversation — only the explicit `context` string. This **prevents context pollution** between sub-tasks.
+- Workers can use any tool except `spawn_agent`, so they can read files, search the web, run code, but **cannot recursively spawn**. No infinite agent trees.
+- When the orchestrator returns multiple `spawn_agent` calls in one turn, the worker loops run **in parallel** (up to `MAX_PARALLEL_TOOLS = 4`). Three workers auditing three different files simultaneously is the canonical use case.
+- The result is wrapped in JSON (`{status, answer, tool_calls_made, error}`) and injected back into the parent loop as a normal tool result. From the parent LLM's perspective, it just called a tool that thought hard and returned a string.
 
 ---
 
