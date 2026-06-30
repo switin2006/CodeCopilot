@@ -53,11 +53,7 @@ class Config:
     MAX_AGENTIC_TURNS: int  = 20   # max LLM→tool loops per user message
     MAX_PARALLEL_TOOLS: int = 4    # max concurrent tool executions
 
-    # ── RAG ────────────────────────────────────────────────────────
-    CHROMA_DIR: str         = ".chroma"
-    RAG_CHUNK_SIZE: int     = 60   # lines per chunk
-    RAG_OVERLAP: int        = 15   # overlap between chunks
-    EMBED_MODEL: str        = "all-MiniLM-L6-v2"
+
 
 
 @dataclass

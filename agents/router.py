@@ -24,11 +24,6 @@ from typing import Optional
 
 from utils.config import Config
 
-# ── Configuration ──────────────────────────────────────────────────
-# A small fast model for cheap classification. Defaults to whatever the
-# main agent uses, so we don't depend on a second model alias being
-# available on the user's account. Override via ROUTER_MODEL if you want
-# a smaller / cheaper one (e.g. "llama3.1-8b" on Cerebras).
 _ROUTER_MODEL   = os.getenv("ROUTER_MODEL", Config.MODEL_ID)
 _MAX_TOKENS     = 8        # only need one word back
 _TEMPERATURE    = 0.0      # fully deterministic

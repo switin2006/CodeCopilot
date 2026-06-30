@@ -22,7 +22,7 @@ memory_store.json
 todo_list.json
 agent_notebook.json
 active_plan.json
-.chroma/
+
 
 # ── Node ──────────────────────────────────────────────────────────
 .grunt

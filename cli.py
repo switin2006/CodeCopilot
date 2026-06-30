@@ -146,7 +146,6 @@ TOOL_ICONS = {
     "question_tool":    "❓",
     "plan":             "🗺️ ",
     "code_exec":        "🐍",
-    "codebase_search":  "🔬",
     "spawn_agent":      "🤖",
 }
 
@@ -172,7 +171,6 @@ def print_banner(persona: str, tool_count: int = 0, auto_routed: bool = False):
             f"[bold white]Workdir:[/bold white] [dim]{os.getcwd()}[/dim]\n"
             f"[dim]Type [bold white]/help[/bold white] for commands  •  "
             f"[bold white]/tools[/bold white] to list tools  •  "
-            f"[bold white]/reindex[/bold white] to index codebase  •  "
             f"[bold white]exit[/bold white] to quit[/dim]",
             border_style=color,
             title=f"[bold {color}]✦ CodeCopilot ✦[/bold {color}]",
@@ -229,8 +227,6 @@ def print_help():
     table.add_row("/tools",             "List all loaded tools with descriptions")
     table.add_row("/clear",             "Clear conversation history")
     table.add_row("/persona <name>",    "Switch persona: coder | debugger | default")
-    table.add_row("/reindex",           "Re-index the codebase for semantic search (RAG)")
-    table.add_row("/reindex --force",   "Force full re-index (clears existing index first)")
     table.add_row("/cwd",               "Show current working directory")
     table.add_row("exit / quit",        "Exit CodeCopilot")
     console.print(table)
@@ -289,17 +285,7 @@ async def main_loop(persona: str = "auto"):
 
     print_banner(current_persona, tool_count=tool_count)
 
-    # ── Auto-index check (runs once on first startup, per-workdir) ──
-    try:
-        from rag import CodebaseIndexer
-        idx = CodebaseIndexer()
-        if not idx.is_indexed():
-            with Live(Spinner("dots2", text=" [dim cyan]First run: Building semantic search index...[/dim cyan]"),
-                      refresh_per_second=10, transient=True):
-                stats = idx.index(".", force=False)
-                console.print(f"[dim]✓ Built codebase index ({stats['chunks_added']} chunks in {stats['duration_sec']}s)[/dim]")
-    except Exception:
-        pass
+
 
     agent: Optional[Agent] = None
     if not auto_mode:
@@ -354,30 +340,7 @@ async def main_loop(persona: str = "auto"):
                 console.print("[dim]✓ Conversation history cleared.[/dim]")
                 continue
 
-            if user_input.lower().startswith("/reindex"):
-                force = "--force" in user_input.lower()
-                console.print(f"[dim]{'Force re-indexing' if force else 'Indexing'} codebase...[/dim]")
-                with Live(Spinner("dots2", text=" [cyan]Embedding codebase...[/cyan]"),
-                          refresh_per_second=10, transient=True):
-                    try:
-                        from rag import CodebaseIndexer
-                        idx = CodebaseIndexer()
-                        stats = idx.index(".", force=force)
-                        console.print(
-                            Panel(
-                                f"[green]✓ Indexed [bold]{stats['chunks_added']}[/bold] chunks "
-                                f"from [bold]{stats['files_indexed']}[/bold] files "
-                                f"in {stats['duration_sec']}s[/green]\n"
-                                f"[dim]Total chunks in store: {stats['collection_size']}[/dim]",
-                                title="[bold cyan]RAG Index[/bold cyan]",
-                                border_style="cyan",
-                            )
-                        )
-                    except ImportError:
-                        console.print("[red]RAG deps not installed. Run: pip install chromadb sentence-transformers[/red]")
-                    except Exception as e:
-                        console.print(f"[red]Indexing failed: {e}[/red]")
-                continue
+
 
             if user_input.lower().startswith("/persona"):
                 parts = user_input.split()

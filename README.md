@@ -7,9 +7,8 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![Cerebras](https://img.shields.io/badge/Inference-Cerebras-FF6B00?style=flat-square)](https://cerebras.ai)
-[![ChromaDB](https://img.shields.io/badge/RAG-ChromaDB-7E22CE?style=flat-square)](https://www.trychroma.com)
 
-CodeCopilot is an autonomous AI coding agent that lives in your terminal. It plans tasks, edits files, runs code, searches the web, and delegates work to specialized sub-agents — all driven by 14 native function-calling tools and a local semantic search index over your codebase.
+CodeCopilot is an autonomous AI coding agent that lives in your terminal. It plans tasks, edits files, runs code, searches the web, and delegates work to specialized sub-agents — all driven by 13 native function-calling tools.
 
 </div>
 
@@ -21,8 +20,7 @@ CodeCopilot is an autonomous AI coding agent that lives in your terminal. It pla
 |---|---|
 | 🧠 **Multi-agent** | An orchestrator agent spawns isolated worker agents for parallel sub-tasks |
 | 🎭 **Personas** | Auto-routes each request to a `coder`, `debugger`, or `default` persona |
-| 🔬 **Semantic RAG** | AST-aware Python chunker + sentence-transformers + ChromaDB |
-| ⚡ **14 Tools** | File I/O, shell, code execution, web search, glob/grep, planning, and more |
+| ⚡ **13 Tools** | File I/O, shell, code execution, web search, glob/grep, planning, and more |
 | 🛡️ **Sandboxed** | Path traversal protection, secret-file blocklist, per-tool confirmation for writes |
 | 🌐 **Project-portable** | Run against any project folder via `--workdir` |
 | 🔌 **OpenAI-compatible** | Works with Cerebras, Groq, HF Router, Ollama — anything that speaks the OpenAI chat API |
@@ -41,7 +39,6 @@ CodeCopilot is an autonomous AI coding agent that lives in your terminal. It pla
   🗺️  plan        action=create        ✓ done   (8-step plan)
   🌐  web_search  Modern CSS Glassmorphism tutorials   ✓ done
   ❓  question    What is your favorite accent color?  → "Orange"
-  🔬  codebase_search  HTML CSS files                  ✓ done
   📂  list_files  path=.                               ✓ done
   🔍  glob_tool   pattern=**/*.html                    ✓ done
   ✍️   write_file  generate_data.py                     ✓ done
@@ -146,7 +143,6 @@ Add the install dir to PATH so `codecopilot` works globally:
 | 🐍 | `code_exec` | Execute Python snippets in a subprocess |
 | 🌐 | `web_search` | Search the web via DuckDuckGo |
 | 🌍 | `fetch_url` | Fetch and extract text from a URL |
-| 🔬 | `codebase_search` | Semantic search over your project (RAG) |
 | 🗺️  | `plan` | Create / track a structured execution plan |
 | ❓ | `question_tool` | Ask the user a clarifying question |
 | 🤖 | `spawn_agent` | Delegate a sub-task to an isolated worker agent |
@@ -166,7 +162,7 @@ flowchart TD
     Orch --> Tools[🔧 Tool Layer]
 
     Tools --> FS[📂 File · Shell]
-    Tools --> Web[🌐 Web · RAG]
+    Tools --> Web[🌐 Web]
     Tools --> Spawn[🤖 spawn_agent]
 
     Spawn --> WA[👷 Worker A<br/>coder]
@@ -190,7 +186,7 @@ flowchart TD
 
 **Key invariants:**
 
-- The **orchestrator** has all 14 tools. Workers get 13 (no `spawn_agent` → no recursion).
+- The **orchestrator** has all 13 tools. Workers get 12 (no `spawn_agent` → no recursion).
 - **Tool calls execute in parallel** when the LLM returns multiple in one turn (`ThreadPoolExecutor`, max 4 concurrent).
 - Workers get a **fresh memory** plus an explicit `context` argument from the orchestrator — they don't share state with the parent or with each other.
 - **Hard caps:** orchestrator 20 turns, workers 15 turns. Prevents runaway loops.
@@ -224,42 +220,6 @@ flowchart LR
 
 ---
 
-## 🔬 How RAG Works Here
-
-```mermaid
-flowchart LR
-    subgraph Index["🏗️ Indexing"]
-        Files[📁 Files] --> Chunk[✂️ Chunk]
-        Chunk --> Emb1[🧠 Embed]
-        Emb1 --> DB[(💾 ChromaDB)]
-    end
-
-    subgraph Search["🔍 Search"]
-        Q[💬 Query] --> Emb2[🧠 Embed]
-        Emb2 --> Find{🎯 Cosine NN}
-        DB -.-> Find
-        Find --> Top[🏆 Top-N hits]
-    end
-
-    style Files fill:#1e293b,stroke:#475569,color:#fff
-    style Chunk fill:#7c3aed,stroke:#a78bfa,color:#fff
-    style DB fill:#0f766e,stroke:#14b8a6,color:#fff
-    style Find fill:#dc2626,stroke:#f87171,color:#fff
-    style Top fill:#16a34a,stroke:#4ade80,color:#fff
-```
-
-**Why this design:**
-
-1. **AST chunking for Python** — each chunk is a coherent function or class, not an arbitrary 500-character slice. Far better signal-to-noise than naive splitting.
-2. **MiniLM-L6-v2** — 22 MB, 384-d, runs on CPU at ~14k sentences/sec. No GPU, no API keys, no per-query cost.
-3. **Cosine + HNSW** — correct distance metric for sentence embeddings, and HNSW gives sub-millisecond approximate-nearest-neighbor lookup even at tens of thousands of chunks.
-4. **Per-project store** — each `--workdir` gets its own `.chroma/`. No cross-contamination.
-5. **Deterministic chunk IDs** — `md5(file_path + lines)` means re-indexing is incremental, not "wipe and rebuild".
-
-**RAG shines for conceptual queries** (*"where is the noise schedule for diffusion sampling?"*). For exact-string searches, the agent uses `grep_tool` instead. The model decides which to use.
-
----
-
 ## 🛡️ Safety
 
 - **Path sandbox.** All file tools resolve paths against the project root and reject anything outside it (path traversal, symlink attacks).
@@ -278,8 +238,6 @@ flowchart LR
 | `/tools` | List all loaded tools |
 | `/clear` | Clear conversation history |
 | `/persona <name>` | Switch persona: `coder` \| `debugger` \| `default` |
-| `/reindex` | Rebuild the RAG index incrementally |
-| `/reindex --force` | Wipe and rebuild the RAG index |
 | `/cwd` | Show current working directory |
 | `exit` / `quit` | Exit |
 
@@ -307,7 +265,6 @@ All settings live in `utils/config.py` and can be overridden via `.env`:
 | `OPENAI_BASE_URL` | `https://api.cerebras.ai/v1` | Inference backend URL |
 | `MODEL_ID` | `zai-glm-4.6` | Main agent model |
 | `ROUTER_MODEL` | same as `MODEL_ID` | Persona-classification model |
-| `EMBED_MODEL` | `all-MiniLM-L6-v2` | RAG embedding model |
 | `MAX_AGENTIC_TURNS` | `20` | Max LLM↔tool loops per message |
 | `MAX_PARALLEL_TOOLS` | `4` | Max concurrent tool calls per turn |
 
@@ -326,16 +283,11 @@ CodeCopilot/
 │   ├── router.py             # Persona classifier
 │   └── worker.py             # Isolated WorkerAgent (no recursion)
 │
-├── tools/                    # 14 tools — drop-in autoloaded
-│   ├── bash.py    code_exec.py    codebase_search.py
-│   ├── edit.py    fetch_url.py    glob.py    grep.py
+├── tools/                    # 13 tools — drop-in autoloaded
+│   ├── bash.py    code_exec.py    edit.py
+│   ├── fetch_url.py    glob.py    grep.py
 │   ├── list.py    plan.py    question.py    read.py
 │   ├── spawn_agent.py    web_search.py    write.py
-│
-├── rag/
-│   ├── chunker.py            # AST + sliding-window chunking
-│   ├── embedder.py           # sentence-transformers wrapper
-│   └── indexer.py            # ChromaDB persistence + search
 │
 └── utils/
     ├── config.py             # Central Config dataclass + AgentEvent
@@ -357,7 +309,7 @@ exact tools mentioned:
 1. plan(action='create') — break this into phases.
 2. web_search + fetch_url — find a glassmorphism CSS tutorial.
 3. question_tool — ask my favorite accent color.
-4. codebase_search + glob_tool — see what HTML/CSS exists.
+4. glob_tool — see what HTML/CSS exists.
 5. write_file + code_exec — generate_data.py with mock JSON.
 6. spawn_agent — delegate writing style.css to a worker (use the color).
 7. write_file — create index.html.
@@ -365,7 +317,7 @@ exact tools mentioned:
 9. bash_tool — serve on port 8000.
 ```
 
-This exercises 13 of 14 tools (everything except a second `spawn_agent`) and chains them through a structured plan.
+This exercises 12 of 13 tools (everything except a second `spawn_agent`) and chains them through a structured plan.
 
 ---
 
@@ -374,10 +326,6 @@ This exercises 13 of 14 tools (everything except a second `spawn_agent`) and cha
 **`401 Unauthorized` from the LLM.** Check that the right API key for your active backend is in `.env` and that no stale system env var (`OPENAI_API_KEY`) is overriding it. Restart the CLI after editing `.env`.
 
 **`429 queue_exceeded`.** The provider's free-tier inference queue is busy. Wait 30s and retry, or set `MODEL_ID` to a smaller model in `.env`.
-
-**`codebase_search` returns nothing.** Run `/reindex --force` inside the CLI. Check that your project has files with extensions in the indexable list (`.py`, `.js`, `.ts`, `.md`, etc.).
-
-**Agent ignores `codebase_search` for simple lookups.** That's correct behavior — for small projects, `list_files` + `read_file` is faster than RAG. Phrase concept-style queries to nudge it: *"find the part that handles X, even if X isn't an exact keyword."*
 
 ---
 
