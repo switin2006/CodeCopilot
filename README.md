@@ -2,7 +2,7 @@
 
 # ✦ CodeCopilot ✦
 
-### A terminal-native, multi-agent AI coding assistant with semantic codebase search
+### A terminal-native, AI coding assistant with semantic codebase search
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
